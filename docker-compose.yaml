@@ -1,10 +1,7 @@
 services:
-  api-service:
+  zephix-server:
     container_name: zephix-server
     image: iazadur/zephix-server:production
-    build:
-      context: .
-      dockerfile: Dockerfile
     ports:
       - "4470:5000"
     environment:
