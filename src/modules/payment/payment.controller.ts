@@ -4,6 +4,10 @@ import { PaymentService } from "./payment.service";
 import { auditService } from "@/services/audit.service";
 import { getPaginationOptions, getStringFilters } from "@/shared/queryOptions";
 import { IAuthUser } from "@/lib/rbac";
+import { streamPdf } from "@/lib/pdf/stream";
+import { renderPayment } from "@/lib/pdf/paymentPdf";
+import { resolveCompany } from "@/lib/pdf/theme";
+import { PdfPayment } from "@/lib/pdf/types";
 
 class Controller extends BaseController {
   create = this.catchAsync(async (req: Request, res: Response) => {
@@ -31,6 +35,8 @@ class Controller extends BaseController {
     const filters = getStringFilters(req, [
       "invoice",
       "client",
+      "contract",
+      "project",
       "method",
       "search",
     ]);
@@ -54,6 +60,20 @@ class Controller extends BaseController {
       message: "Payment fetched successfully.",
       data: payment,
     });
+  });
+
+  pdf = this.catchAsync(async (req: Request, res: Response) => {
+    const { payment, company } = await PaymentService.getForDocument(
+      req.params.id,
+      req.user as IAuthUser
+    );
+    streamPdf(
+      res,
+      `${payment.payment_number}.pdf`,
+      `Payment Receipt ${payment.payment_number}`,
+      (doc) =>
+        renderPayment(doc, payment as unknown as PdfPayment, resolveCompany(company))
+    );
   });
 
   update = this.catchAsync(async (req: Request, res: Response) => {

@@ -4,9 +4,15 @@ import { HttpStatusCode } from "@/lib/httpStatus";
 import { DealModel } from "./deal.model";
 import { DEAL_STAGE, OPEN_STAGES } from "./deal.enum";
 import { ClientService } from "@/modules/client/client.service";
+import { ContractService } from "@/modules/contract/contract.service";
 import { scopeFilter } from "@/shared/scope";
 import { IAuthUser } from "@/lib/rbac";
-import { money, mulMoney, DEFAULT_CURRENCY } from "@/lib/money";
+import {
+  money,
+  mulMoney,
+  decimal128ToString,
+  DEFAULT_CURRENCY,
+} from "@/lib/money";
 import { paginationHelpers } from "@/helpers/paginationHelpers";
 import { IPaginationOptions } from "@/interfaces/pagination.interfaces";
 
@@ -148,6 +154,68 @@ class Service {
       { new: true }
     ).populate(populateRefs);
     return { updated, before: before.toObject() };
+  }
+
+  /**
+   * Convert a won deal into a draft contract (spec §A1/§F1). Seeds a line from
+   * the deal's service + expected value, links deal↔contract for attribution,
+   * marks the deal won, and activates the client. The user lands on the draft
+   * contract to review/adjust before issuing anything.
+   */
+  async convert(id: string, user: IAuthUser) {
+    const deal = await DealModel.findOne({
+      _id: id,
+      is_Deleted: false,
+      ...this.scope(user),
+    });
+    if (!deal) throw new ApiError(HttpStatusCode.NOT_FOUND, "Deal not found.");
+    if (!deal.client)
+      throw new ApiError(
+        HttpStatusCode.BAD_REQUEST,
+        "Link this deal to a client before converting it to a contract."
+      );
+    if (deal.converted_contract)
+      throw new ApiError(
+        HttpStatusCode.CONFLICT,
+        "This deal has already been converted to a contract."
+      );
+    await ClientService.assertAccess(String(deal.client), user);
+
+    const amount = decimal128ToString(deal.expected_value.amount);
+    const currency = deal.expected_value.currency;
+    const services =
+      Number(amount) > 0 || deal.service
+        ? [
+            {
+              service: deal.service ? String(deal.service) : "",
+              name: deal.name,
+              pricing_model: "fixed",
+              price: amount,
+              quantity: 1,
+            },
+          ]
+        : [];
+
+    const contract = await ContractService.create(
+      {
+        client: String(deal.client),
+        deal: String(deal._id),
+        name: deal.name,
+        status: "draft",
+        currency,
+        account_manager: deal.owner ? String(deal.owner) : "",
+        services,
+      },
+      user
+    );
+
+    await DealModel.findByIdAndUpdate(id, {
+      stage: DEAL_STAGE.WON,
+      converted_contract: contract._id,
+    });
+    await ClientService.markActive(String(deal.client));
+
+    return contract;
   }
 
   async remove(id: string, user: IAuthUser) {

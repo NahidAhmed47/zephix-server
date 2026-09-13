@@ -36,6 +36,18 @@ router.post(
   validateRequest(renewContractSchema),
   ContractController.renew
 );
+// Generate a draft invoice from the contract's one-off lines (§A2).
+router.post(
+  "/:id/generate-invoice",
+  requirePermission("invoices.create"),
+  ContractController.generateInvoice
+);
+// Create recurring billing schedules from the contract's recurring lines (§A3).
+router.post(
+  "/:id/generate-schedules",
+  requirePermission("recurring_billing.create"),
+  ContractController.generateSchedules
+);
 router.patch(
   "/:id",
   requirePermission("contracts.edit"),

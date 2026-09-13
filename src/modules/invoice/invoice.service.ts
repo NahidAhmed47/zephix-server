@@ -249,6 +249,25 @@ class Invoice {
     return invoice;
   }
 
+  /** Fully-populated invoice + company letterhead settings, for the PDF. */
+  async getForDocument(id: string, user: IAuthUser) {
+    const invoice = await InvoiceModel.findOne({
+      _id: id,
+      is_Deleted: false,
+      ...(await this.clientScope(user)),
+    })
+      .populate({ path: "client", select: "name email phone website address" })
+      .populate({ path: "contract", select: "contract_number name" })
+      .populate({ path: "project", select: "name" })
+      .lean();
+    if (!invoice)
+      throw new ApiError(HttpStatusCode.NOT_FOUND, "Invoice not found.");
+    const setting = await SettingModel.findOne({ key: "global" })
+      .select("company")
+      .lean();
+    return { invoice, company: setting?.company ?? {} };
+  }
+
   async update(id: string, data: Record<string, unknown>, user: IAuthUser) {
     const before = await InvoiceModel.findOne({
       _id: id,

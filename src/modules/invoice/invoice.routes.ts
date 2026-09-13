@@ -27,6 +27,11 @@ router.post(
   InvoiceController.create
 );
 router.get("/:id", requirePermission("invoices.view"), InvoiceController.getOne);
+router.get(
+  "/:id/pdf",
+  requirePermission("invoices.view"),
+  InvoiceController.pdf
+);
 router.post(
   "/:id/send",
   requirePermission("invoices.send"),

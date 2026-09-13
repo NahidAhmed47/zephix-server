@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import { InvoiceService } from "@/modules/invoice/invoice.service";
 import { RecurringBillingService } from "@/modules/recurringBilling/recurringBilling.service";
+import { ContractService } from "@/modules/contract/contract.service";
 import { ReminderService } from "@/services/reminder.service";
 import { NotificationService } from "@/modules/notification/notification.service";
 import { HostingService } from "@/modules/hosting/hosting.service";
@@ -13,6 +14,7 @@ import { HostingService } from "@/modules/hosting/hosting.service";
 
 export const JOBS = [
   "recurring-invoices",
+  "milestones",
   "overdue",
   "reminders",
   "notifications",
@@ -25,6 +27,7 @@ export const runAllJobs = async () => {
   const results: Record<string, any> = {};
   const steps: [string, () => Promise<unknown>][] = [
     ["recurring_invoices", () => RecurringBillingService.generateDue()],
+    ["milestones", () => ContractService.generateDueMilestones()],
     ["overdue", () => InvoiceService.markOverdue()],
     ["reminders", () => ReminderService.processReminders()],
     ["notifications", () => NotificationService.generateAlerts()],
@@ -45,6 +48,8 @@ export const runJob = async (job: string) => {
   switch (job) {
     case "recurring-invoices":
       return { recurring_invoices: await RecurringBillingService.generateDue() };
+    case "milestones":
+      return { milestones: await ContractService.generateDueMilestones() };
     case "overdue":
       return { overdue: await InvoiceService.markOverdue() };
     case "reminders":

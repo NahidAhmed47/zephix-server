@@ -16,6 +16,11 @@ router.post(
   PaymentController.create
 );
 router.get("/:id", requirePermission("payments.view"), PaymentController.getOne);
+router.get(
+  "/:id/pdf",
+  requirePermission("payments.view"),
+  PaymentController.pdf
+);
 router.patch(
   "/:id",
   requirePermission("payments.edit"),

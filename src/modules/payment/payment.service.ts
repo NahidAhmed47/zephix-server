@@ -69,6 +69,8 @@ class Payment {
     });
 
     await InvoiceService.recomputePayments(String(invoice._id));
+    // A payment received is a strong signal the client is now active (§A4).
+    await ClientService.markActive(invoice.client);
     return this.getById(String(doc._id), user);
   }
 
@@ -77,6 +79,8 @@ class Payment {
     filters: {
       invoice?: string;
       client?: string;
+      contract?: string;
+      project?: string;
       method?: string;
       search?: string;
     },
@@ -88,6 +92,8 @@ class Payment {
     const cond: any = { is_Deleted: false, ...(await this.clientScope(user)) };
     if (filters.invoice) cond.invoice = filters.invoice;
     if (filters.client) cond.client = filters.client;
+    if (filters.contract) cond.contract = filters.contract;
+    if (filters.project) cond.project = filters.project;
     if (filters.method) cond.method = filters.method;
     if (filters.search)
       cond.payment_number = { $regex: filters.search, $options: "i" };
@@ -113,6 +119,28 @@ class Payment {
     if (!payment)
       throw new ApiError(HttpStatusCode.NOT_FOUND, "Payment not found.");
     return payment;
+  }
+
+  /** Fully-populated payment + company letterhead settings, for the receipt PDF. */
+  async getForDocument(id: string, user: IAuthUser) {
+    const payment = await PaymentModel.findOne({
+      _id: id,
+      is_Deleted: false,
+      ...(await this.clientScope(user)),
+    })
+      .populate({
+        path: "invoice",
+        select: "invoice_number total amount_due status",
+      })
+      .populate({ path: "client", select: "name email phone website address" })
+      .populate({ path: "received_by", select: "name email" })
+      .lean();
+    if (!payment)
+      throw new ApiError(HttpStatusCode.NOT_FOUND, "Payment not found.");
+    const setting = await SettingModel.findOne({ key: "global" })
+      .select("company")
+      .lean();
+    return { payment, company: setting?.company ?? {} };
   }
 
   async update(id: string, data: Record<string, unknown>, user: IAuthUser) {

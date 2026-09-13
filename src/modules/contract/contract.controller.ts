@@ -115,6 +115,49 @@ class Controller extends BaseController {
     });
   });
 
+  generateInvoice = this.catchAsync(async (req: Request, res: Response) => {
+    const invoice = await ContractService.generateInvoice(
+      req.params.id,
+      req.user as IAuthUser
+    );
+    await auditService.log({
+      req,
+      action: "contract.generate_invoice",
+      module: "contracts",
+      resource_id: req.params.id,
+      after: {
+        invoice_number: (invoice as { invoice_number?: string })
+          ?.invoice_number,
+      },
+    });
+    this.sendResponse(res, {
+      statusCode: 201,
+      success: true,
+      message: "Draft invoice generated from contract.",
+      data: invoice,
+    });
+  });
+
+  generateSchedules = this.catchAsync(async (req: Request, res: Response) => {
+    const result = await ContractService.generateSchedules(
+      req.params.id,
+      req.user as IAuthUser
+    );
+    await auditService.log({
+      req,
+      action: "contract.generate_schedules",
+      module: "contracts",
+      resource_id: req.params.id,
+      after: result,
+    });
+    this.sendResponse(res, {
+      statusCode: 201,
+      success: true,
+      message: `Created ${result.created} schedule(s), skipped ${result.skipped}.`,
+      data: result,
+    });
+  });
+
   remove = this.catchAsync(async (req: Request, res: Response) => {
     const before = await ContractService.remove(
       req.params.id,

@@ -28,6 +28,13 @@ router.patch(
   validateRequest(updateDealStageSchema),
   DealController.updateStage
 );
+// Convert a won deal into a draft contract (requires the ability to create
+// contracts, since that is what it produces).
+router.post(
+  "/:id/convert",
+  requirePermission("contracts.create"),
+  DealController.convert
+);
 router.patch(
   "/:id",
   requirePermission("deals.edit"),
