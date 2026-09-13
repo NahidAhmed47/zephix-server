@@ -18,6 +18,7 @@ export interface IDeal {
   expected_close_date?: Date | null;
   stage: TDealStage;
   owner?: Types.ObjectId | string;
+  converted_contract?: Types.ObjectId | string | null; // set on deal→contract conversion
   notes?: string;
   created_by?: Types.ObjectId | string;
   is_Deleted: boolean;

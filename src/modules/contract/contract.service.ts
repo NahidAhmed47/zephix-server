@@ -3,6 +3,9 @@ import { HttpStatusCode } from "@/lib/httpStatus";
 import { ContractModel, ContractServiceModel } from "./contract.model";
 import { CONTRACT_STATUS, LIVE_CONTRACT_STATUSES } from "./contract.enum";
 import { ClientService } from "@/modules/client/client.service";
+import { InvoiceService } from "@/modules/invoice/invoice.service";
+import { RecurringBillingService } from "@/modules/recurringBilling/recurringBilling.service";
+import { RecurringBillingModel } from "@/modules/recurringBilling/recurringBilling.model";
 import { scopeFilter } from "@/shared/scope";
 import { IAuthUser } from "@/lib/rbac";
 import {
@@ -11,6 +14,7 @@ import {
   sumMoney,
   addMoney,
   zeroMoney,
+  decimal128ToString,
   IMoney,
   DEFAULT_CURRENCY,
 } from "@/lib/money";
@@ -66,15 +70,38 @@ class Contract {
     return `${prefix}${String(count + 1).padStart(4, "0")}`;
   }
 
+  /** Stable natural key for a line, used to carry the `invoiced` flag across a
+   *  destructive line resync so already-billed milestones are not re-billed. */
+  private lineKey(name: string, pricingModel: string, priceStr: string): string {
+    return `${name}|${pricingModel}|${priceStr}`;
+  }
+
   /**
    * Replace a contract's service lines with the provided set and return the
-   * recomputed aggregates. All money is computed server-side (spec §54).
+   * recomputed aggregates. All money is computed server-side (spec §54). The
+   * milestone `invoiced` flag is preserved across the resync (spec §A5).
    */
   private async syncLines(
     contractId: string,
     currency: string,
     lines: LineInput[]
   ): Promise<{ total: IMoney; mrr: IMoney }> {
+    const existing = await ContractServiceModel.find({
+      contract: contractId,
+      is_Deleted: false,
+    }).lean();
+    const priorInvoiced = new Map<string, boolean>();
+    for (const e of existing) {
+      priorInvoiced.set(
+        this.lineKey(
+          e.name,
+          e.pricing_model,
+          decimal128ToString(e.price.amount)
+        ),
+        !!e.invoiced
+      );
+    }
+
     await ContractServiceModel.deleteMany({ contract: contractId });
     if (!lines.length)
       return { total: zeroMoney(currency), mrr: zeroMoney(currency) };
@@ -82,18 +109,25 @@ class Contract {
     const docs = lines.map((l) => {
       const quantity = Number(l.quantity ?? 1);
       const pricing_model = l.pricing_model || PRICING_MODEL.FIXED;
-      const line_total = mulMoney(money(l.price ?? 0, currency), quantity);
+      const price = money(l.price ?? 0, currency);
+      const line_total = mulMoney(price, quantity);
+      const key = this.lineKey(
+        l.name,
+        pricing_model,
+        decimal128ToString(price.amount)
+      );
       return {
         contract: contractId,
         service: l.service || null,
         name: l.name,
         description: l.description || "",
         pricing_model,
-        price: money(l.price ?? 0, currency),
+        price,
         quantity,
         line_total,
         start_date: l.start_date || null,
         end_date: l.end_date || null,
+        invoiced: priorInvoiced.get(key) ?? false,
         messaging: {
           sms: l.messaging?.sms || MESSAGING_PREF.INHERIT,
           email: l.messaging?.email || MESSAGING_PREF.INHERIT,
@@ -122,6 +156,7 @@ class Contract {
     const doc = await ContractModel.create({
       contract_number,
       client: data.client,
+      deal: data.deal || null,
       name: data.name,
       status: data.status || CONTRACT_STATUS.DRAFT,
       start_date: data.start_date || null,
@@ -148,6 +183,10 @@ class Contract {
     doc.total_value = total;
     doc.mrr_value = mrr;
     await doc.save();
+
+    // A live contract activates the client (§A4).
+    if ((data.status || CONTRACT_STATUS.DRAFT) === CONTRACT_STATUS.ACTIVE)
+      await ClientService.markActive(String(data.client));
 
     return this.getById(String(doc._id), user);
   }
@@ -259,6 +298,9 @@ class Contract {
       });
     }
 
+    if (data.status === CONTRACT_STATUS.ACTIVE)
+      await ClientService.markActive(String(before.client));
+
     return { updated: await this.getById(id, user), before: before.toObject() };
   }
 
@@ -277,7 +319,171 @@ class Contract {
       renewal_date: data.renewal_date || null,
       status: CONTRACT_STATUS.ACTIVE,
     });
+    await ClientService.markActive(String(before.client));
     return { updated: await this.getById(id, user), before: before.toObject() };
+  }
+
+  /**
+   * Draft an invoice from a contract's one-off (non-recurring) lines so billed
+   * amounts reconcile to the agreement (spec §A2/§F2). Recurring lines are
+   * handled by schedules (§A3); milestone dates are handled by the cron (§A5).
+   */
+  async generateInvoice(id: string, user: IAuthUser) {
+    const contract = await ContractModel.findOne({
+      _id: id,
+      is_Deleted: false,
+      ...this.scope(user),
+    });
+    if (!contract)
+      throw new ApiError(HttpStatusCode.NOT_FOUND, "Contract not found.");
+
+    const lines = await ContractServiceModel.find({
+      contract: id,
+      is_Deleted: false,
+    });
+    const billable = lines.filter(
+      (l) => !RECURRING_PRICING_MODELS.includes(l.pricing_model)
+    );
+    if (!billable.length)
+      throw new ApiError(
+        HttpStatusCode.BAD_REQUEST,
+        "This contract has no one-off (non-recurring) lines to invoice."
+      );
+
+    return InvoiceService.create(
+      {
+        client: String(contract.client),
+        contract: String(contract._id),
+        currency: contract.currency,
+        status: "draft",
+        lines: billable.map((l) => ({
+          description: l.name,
+          quantity: l.quantity,
+          unit_price: decimal128ToString(l.price.amount),
+          service: l.service ? String(l.service) : "",
+        })),
+      },
+      user
+    );
+  }
+
+  /**
+   * Create recurring billing schedules from a contract's recurring lines
+   * (spec §A3). Idempotent-ish: a line already backed by a schedule (same
+   * service + frequency + label) is skipped so re-running won't double-bill.
+   */
+  async generateSchedules(id: string, user: IAuthUser) {
+    const contract = await ContractModel.findOne({
+      _id: id,
+      is_Deleted: false,
+      ...this.scope(user),
+    });
+    if (!contract)
+      throw new ApiError(HttpStatusCode.NOT_FOUND, "Contract not found.");
+
+    const lines = await ContractServiceModel.find({
+      contract: id,
+      is_Deleted: false,
+    });
+    const recurring = lines.filter((l) =>
+      RECURRING_PRICING_MODELS.includes(l.pricing_model)
+    );
+    if (!recurring.length)
+      throw new ApiError(
+        HttpStatusCode.BAD_REQUEST,
+        "This contract has no recurring lines to schedule."
+      );
+
+    const existing = await RecurringBillingModel.find({
+      contract: id,
+      is_Deleted: false,
+    }).lean();
+
+    let created = 0;
+    let skipped = 0;
+    for (const l of recurring) {
+      // Recurring pricing-model values map 1:1 onto billing frequencies.
+      const frequency = l.pricing_model;
+      const dup = existing.find(
+        (e) =>
+          String(e.service || "") === String(l.service || "") &&
+          e.frequency === frequency &&
+          (e.description || "") === (l.name || "")
+      );
+      if (dup) {
+        skipped++;
+        continue;
+      }
+      const start = l.start_date || contract.start_date || new Date();
+      await RecurringBillingService.create(
+        {
+          client: String(contract.client),
+          contract: String(contract._id),
+          service: l.service ? String(l.service) : "",
+          amount: decimal128ToString(l.line_total.amount),
+          currency: contract.currency,
+          frequency,
+          start_date: new Date(start).toISOString(),
+          description: l.name,
+        },
+        user
+      );
+      created++;
+    }
+    return { created, skipped, total: recurring.length };
+  }
+
+  /**
+   * Cron step (spec §A5): raise an invoice for every milestone line whose due
+   * date has arrived and that has not yet been billed, then mark it invoiced.
+   * Idempotent via the line `invoiced` flag and error-tolerant per line (§59).
+   */
+  async generateDueMilestones(now: Date = new Date()) {
+    const lines = await ContractServiceModel.find({
+      is_Deleted: false,
+      pricing_model: PRICING_MODEL.MILESTONE,
+      invoiced: { $ne: true },
+      start_date: { $ne: null, $lte: now },
+    });
+
+    let generated = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const l of lines) {
+      try {
+        const contract = await ContractModel.findOne({
+          _id: l.contract,
+          is_Deleted: false,
+        });
+        if (!contract || contract.status === CONTRACT_STATUS.CANCELLED) {
+          skipped++;
+          continue;
+        }
+        await InvoiceService.createInternal({
+          client: String(contract.client),
+          contract: String(contract._id),
+          currency: contract.currency,
+          issue_date: new Date(l.start_date || now).toISOString(),
+          status: "issued",
+          lines: [
+            {
+              description: l.name,
+              quantity: l.quantity,
+              unit_price: decimal128ToString(l.price.amount),
+            },
+          ],
+        });
+        await ContractServiceModel.findByIdAndUpdate(l._id, { invoiced: true });
+        generated++;
+      } catch (e) {
+        failed++;
+        console.error(
+          "[cron] milestone invoice generation failed:",
+          (e as Error).message
+        );
+      }
+    }
+    return { due: lines.length, generated, skipped, failed };
   }
 
   async remove(id: string, user: IAuthUser) {

@@ -133,12 +133,6 @@ export const PERMISSION_CATALOG: IPermissionModule[] = [
     ["manage_templates", "Manage templates"],
     ["manage_rules", "Manage reminder rules"],
   ]),
-  mod("tasks", "Tasks", [
-    ["view", "View tasks"],
-    ["create", "Create tasks"],
-    ["edit", "Edit tasks"],
-    ["delete", "Delete tasks", true],
-  ]),
   mod("documents", "Documents", [
     ["view", "View documents"],
     ["create", "Upload documents"],
@@ -180,7 +174,6 @@ export const SCOPED_MODULES = [
   "payments",
   "recurring_billing",
   "expenses",
-  "tasks",
 ];
 
 export const PERMISSION_KEYS: string[] = PERMISSION_CATALOG.flatMap((m) =>

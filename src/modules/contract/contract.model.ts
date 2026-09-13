@@ -35,8 +35,10 @@ const contractServiceSchema = new Schema<IContractService>(
     price: moneyField(),
     quantity: { type: Number, default: 1, min: 0 },
     line_total: moneyField(),
-    start_date: { type: Date, default: null },
+    start_date: { type: Date, default: null }, // milestone due date when pricing_model = milestone
     end_date: { type: Date, default: null },
+    // True once a milestone line has been billed — prevents re-invoicing (§A5).
+    invoiced: { type: Boolean, default: false },
     messaging: messagingField(),
     is_Deleted: { type: Boolean, default: false },
   },
@@ -55,6 +57,7 @@ const contractSchema = new Schema<IContract>(
   {
     contract_number: { type: String, required: true, unique: true, trim: true },
     client: { type: Schema.Types.ObjectId, ref: "Client", required: true },
+    deal: { type: Schema.Types.ObjectId, ref: "Deal", default: null }, // source deal (attribution)
     name: { type: String, required: true, trim: true },
     status: {
       type: String,
@@ -78,6 +81,7 @@ const contractSchema = new Schema<IContract>(
 );
 
 contractSchema.index({ client: 1 });
+contractSchema.index({ deal: 1 });
 contractSchema.index({ status: 1 });
 contractSchema.index({ end_date: 1 });
 contractSchema.index({ renewal_date: 1 });

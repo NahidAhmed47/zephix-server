@@ -41,9 +41,9 @@ async function main() {
 
 main();
 
-// process.on("SIGTERM", () => {
-//   console.warn("SIGTERM received. Shutting down gracefully...");
-//   if (server) {
-//     server.close(() => console.info("Server closed."));
-//   }
-// });
+process.on("SIGTERM", () => {
+  console.warn("SIGTERM received. Shutting down gracefully...");
+  if (server) {
+    server.close(() => console.info("Server closed."));
+  }
+});

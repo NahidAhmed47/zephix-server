@@ -24,8 +24,9 @@ export interface IContractService {
   price: IMoney; // unit price
   quantity: number;
   line_total: IMoney; // server-computed = price × quantity
-  start_date?: Date | null;
+  start_date?: Date | null; // milestone due date when pricing_model = milestone
   end_date?: Date | null;
+  invoiced?: boolean; // true once a milestone line has been billed (§A5)
   messaging: IMessagingPrefs; // service-level override
   is_Deleted: boolean;
   createdAt?: Date;
@@ -36,6 +37,7 @@ export interface IContract {
   _id?: string;
   contract_number: string; // unique, auto-generated (ZPX-YYYY-####)
   client: Types.ObjectId | string;
+  deal?: Types.ObjectId | string | null; // source deal (attribution)
   name: string;
   status: TContractStatus;
   start_date?: Date | null;

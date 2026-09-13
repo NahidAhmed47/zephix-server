@@ -20,6 +20,12 @@ const dealSchema = new Schema<IDeal>(
       default: DEAL_STAGE.LEAD,
     },
     owner: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    // Set when the deal is converted to a contract (sales → delivery link).
+    converted_contract: {
+      type: Schema.Types.ObjectId,
+      ref: "Contract",
+      default: null,
+    },
     notes: { type: String, default: "" },
     created_by: { type: Schema.Types.ObjectId, ref: "User", default: null },
     is_Deleted: { type: Boolean, default: false },

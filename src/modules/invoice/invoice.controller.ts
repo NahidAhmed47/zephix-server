@@ -4,6 +4,10 @@ import { InvoiceService } from "./invoice.service";
 import { auditService } from "@/services/audit.service";
 import { getPaginationOptions, getStringFilters } from "@/shared/queryOptions";
 import { IAuthUser } from "@/lib/rbac";
+import { streamPdf } from "@/lib/pdf/stream";
+import { renderInvoice } from "@/lib/pdf/invoicePdf";
+import { resolveCompany } from "@/lib/pdf/theme";
+import { PdfInvoice } from "@/lib/pdf/types";
 
 class Controller extends BaseController {
   create = this.catchAsync(async (req: Request, res: Response) => {
@@ -78,6 +82,20 @@ class Controller extends BaseController {
       message: "Invoice fetched successfully.",
       data: invoice,
     });
+  });
+
+  pdf = this.catchAsync(async (req: Request, res: Response) => {
+    const { invoice, company } = await InvoiceService.getForDocument(
+      req.params.id,
+      req.user as IAuthUser
+    );
+    streamPdf(
+      res,
+      `${invoice.invoice_number}.pdf`,
+      `Invoice ${invoice.invoice_number}`,
+      (doc) =>
+        renderInvoice(doc, invoice as unknown as PdfInvoice, resolveCompany(company))
+    );
   });
 
   update = this.catchAsync(async (req: Request, res: Response) => {

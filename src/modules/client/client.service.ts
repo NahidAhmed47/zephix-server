@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import ApiError from "@/middlewares/error";
 import { HttpStatusCode } from "@/lib/httpStatus";
 import { ClientModel } from "./client.model";
+import { CLIENT_STATUS } from "./client.enum";
 import { ContactModel } from "@/modules/contact/contact.model";
 import { DealModel } from "@/modules/deal/deal.model";
 import { OPEN_STAGES, DEAL_STAGE } from "@/modules/deal/deal.enum";
@@ -121,6 +122,29 @@ class Service {
     }).select("_id");
     if (!client) throw new ApiError(HttpStatusCode.NOT_FOUND, "Client not found.");
     return client;
+  }
+
+  /**
+   * Promote a lead/prospect client to `active`. Called when a contract goes live
+   * or a payment lands (spec §F8/A4). No-op for any other status and never
+   * throws — activation must not break the operation that triggered it.
+   */
+  async markActive(
+    clientId: string | Types.ObjectId | null | undefined
+  ): Promise<void> {
+    if (!clientId) return;
+    try {
+      await ClientModel.updateOne(
+        {
+          _id: clientId,
+          is_Deleted: false,
+          status: { $in: [CLIENT_STATUS.LEAD, CLIENT_STATUS.PROSPECT] },
+        },
+        { $set: { status: CLIENT_STATUS.ACTIVE } }
+      );
+    } catch (e) {
+      console.error("[client] markActive failed:", (e as Error).message);
+    }
   }
 
   /** null → caller can access all clients; otherwise the accessible ids. */

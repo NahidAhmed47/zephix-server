@@ -99,6 +99,30 @@ class Controller extends BaseController {
     });
   });
 
+  convert = this.catchAsync(async (req: Request, res: Response) => {
+    const contract = await DealService.convert(
+      req.params.id,
+      req.user as IAuthUser
+    );
+    const c = contract as { _id?: unknown; contract_number?: string };
+    await auditService.log({
+      req,
+      action: "deal.convert",
+      module: "deals",
+      resource_id: req.params.id,
+      after: {
+        contract_id: String(c?._id),
+        contract_number: c?.contract_number,
+      },
+    });
+    this.sendResponse(res, {
+      statusCode: 201,
+      success: true,
+      message: "Deal converted to a draft contract.",
+      data: contract,
+    });
+  });
+
   remove = this.catchAsync(async (req: Request, res: Response) => {
     const before = await DealService.remove(req.params.id, req.user as IAuthUser);
     await auditService.log({
